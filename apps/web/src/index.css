@@ -91,3 +91,29 @@ body {
 pre.json-view {
   tab-size: 2;
 }
+
+/* React Flow (Workflow Studio) — touch-sized controls + dark mode */
+.react-flow__controls button {
+  width: 40px;
+  height: 40px;
+}
+
+.dark .react-flow__controls button,
+.dark .react-flow__minimap {
+  background-color: rgb(15 23 42);
+  border-color: rgb(51 65 85);
+  fill: rgb(226 232 240);
+}
+
+.dark .react-flow__controls button:hover {
+  background-color: rgb(30 41 59);
+}
+
+.dark .react-flow__attribution {
+  background-color: rgb(15 23 42 / 0.7);
+  color: rgb(148 163 184);
+}
+
+.dark .react-flow__edge.selected path.react-flow__edge-path {
+  stroke: var(--color-brand-500);
+}

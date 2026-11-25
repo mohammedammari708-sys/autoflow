@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { workflowsApi } from '../lib/api';
@@ -9,9 +9,14 @@ import { useToast } from '../context/ToastContext';
 import { Button } from '../components/ui/Button';
 import { Card, CardBody, CardHeader } from '../components/ui/Card';
 import { Badge, EmptyState, Spinner } from '../components/ui/Badge';
-import { Field, Input, Textarea } from '../components/ui/Input';
+import { Field, Textarea } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/Layout';
+
+// Lazy-load the editor (React Flow) so other pages don't pay its bundle cost.
+const WorkflowEditor = lazy(() =>
+  import('../components/workflow/WorkflowEditor').then((m) => ({ default: m.WorkflowEditor })),
+);
 
 export function WorkflowDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -21,7 +26,6 @@ export function WorkflowDetailPage() {
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [toggling, setToggling] = useState(false);
@@ -35,7 +39,6 @@ export function WorkflowDetailPage() {
       .get(id)
       .then(({ workflow: w }) => {
         setWorkflow(w);
-        setName(w.name);
         setDescription(w.description ?? '');
       })
       .catch((err: unknown) => {
@@ -66,13 +69,12 @@ export function WorkflowDetailPage() {
     );
   }
 
-  const save = async (e: FormEvent) => {
+  const saveDescription = async (e: FormEvent) => {
     e.preventDefault();
     if (!id) return;
     setSaving(true);
     try {
       const { workflow: w } = await workflowsApi.update(id, {
-        name: name.trim(),
         description: description.trim(),
       });
       setWorkflow(w);
@@ -138,15 +140,19 @@ export function WorkflowDetailPage() {
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      {/* Visual editor — full-bleed within the page column for max canvas room */}
+      <div className="-mx-4 sm:-mx-6">
+        <Suspense fallback={<Spinner label={t.common.loading} />}>
+          <WorkflowEditor workflow={workflow} onSaved={setWorkflow} />
+        </Suspense>
+      </div>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <div className="flex flex-col gap-6 lg:col-span-2">
           <Card>
             <CardHeader title={t.common.edit} />
             <CardBody>
-              <form onSubmit={save} className="flex flex-col gap-4">
-                <Field label={t.workflows.name}>
-                  <Input value={name} onChange={(e) => setName(e.target.value)} required />
-                </Field>
+              <form onSubmit={saveDescription} className="flex flex-col gap-4">
                 <Field label={t.workflows.description}>
                   <Textarea value={description} onChange={(e) => setDescription(e.target.value)} />
                 </Field>
@@ -191,12 +197,6 @@ export function WorkflowDetailPage() {
               <Button variant="secondary" loading={toggling} onClick={() => void toggleActive()} className="w-full">
                 {workflow.active ? t.common.inactive : t.common.active}
               </Button>
-              <Button disabled title={t.workflowDetail.editorNote} className="w-full">
-                {t.workflowDetail.openEditor}
-              </Button>
-              <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                {t.workflowDetail.editorNote}
-              </p>
               <Button variant="secondary" onClick={exportJson} className="w-full">
                 ⬇ {t.workflowDetail.exportJson}
               </Button>

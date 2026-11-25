@@ -164,7 +164,12 @@ export const workflowsApi = {
       method: 'POST',
     }),
   get: (id: string) => api<{ workflow: Workflow }>(`/api/workflows/${id}`),
-  update: (id: string, patch: Partial<Pick<Workflow, 'name' | 'description' | 'active'>>) =>
+  update: (
+    id: string,
+    patch: Partial<Pick<Workflow, 'name' | 'description' | 'active'>> & {
+      definition?: WorkflowDefinition;
+    },
+  ) =>
     api<{ workflow: Workflow }>(`/api/workflows/${id}`, {
       body: JSON.stringify(patch),
       method: 'PATCH',
