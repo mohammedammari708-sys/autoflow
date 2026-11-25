@@ -1,0 +1,47 @@
+# AutoFlow — production-like stack on one machine (same origin:
+# the web container proxies /api to the API, so no cross-site
+# cookies and no VITE_API_URL are needed).
+#
+# Usage:
+#   1. Create a `.env` file next to this file with two secrets
+#      (generate them — never reuse the examples):
+#        JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+#        ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+#   2. docker compose up --build
+#   3. Open http://localhost:8080 and register an account.
+#
+# Data lives in the named volume `autoflow-data`
+# (SQLite file /app/data/autoflow.db inside the API container)
+# and survives restarts of the stack. `docker compose down -v`
+# deletes it — do not run that unless you mean to wipe the data.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      DATABASE_URL: ./data/autoflow.db
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env — see the header of this file}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env — see the header of this file}
+      WEB_ORIGIN: http://localhost:8080
+    volumes:
+      - autoflow-data:/app/data
+    expose:
+      - "4000"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  autoflow-data:

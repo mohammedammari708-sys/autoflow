@@ -1,0 +1,63 @@
+# Render blueprint — AutoFlow (API web service + static site).
+# See DEPLOY.md for the step-by-step guide (in Darija).
+#
+# Deploy: push this repo to GitHub, then in Render:
+#   New → Blueprint → pick the repo.
+# Render creates both services and generates JWT_SECRET /
+# ENCRYPTION_KEY automatically (generateValue).
+#
+# AFTER the first deploy, check two things:
+#   1. The static site URL is https://autoflow-web.onrender.com.
+#      If Render gave it a different name, update WEB_ORIGIN below
+#      to match and redeploy the API.
+#   2. VITE_API_URL is wired from the API service's host automatically
+#      (fromService). The frontend prepends https:// to a bare host.
+#
+# FREE-TIER WARNING (verified 2026-11-25, render.com/docs/free):
+# - Free web services spin down after 15 minutes without traffic
+#   (first visit after that takes ~1 minute) and their local
+#   filesystem is EPHEMERAL: any change to the SQLite file is lost
+#   when the service restarts. This deployment is a DEMO, not a
+#   place to keep real user data. The durable path is Supabase
+#   PostgreSQL — but the backend migration to Postgres is NOT done
+#   yet (see DEPLOY.md, path B).
+# - Free Render Postgres expires 30 days after creation (1 GB cap).
+
+services:
+  - type: web
+    name: autoflow-api
+    env: node
+    plan: free
+    buildCommand: npm ci --no-audit --no-fund && npm run build --workspace=@autoflow/api
+    startCommand: npm start --workspace=@autoflow/api
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      # Split deployment (frontend and API on different domains):
+      # the login cookie must be SameSite=None, otherwise the browser
+      # will not send it to the API and every request returns 401.
+      - key: COOKIE_SAMESITE
+        value: none
+      # Must be the exact public URL of the static site (with https://).
+      # Default name-based URL — change it if you rename the site.
+      - key: WEB_ORIGIN
+        value: https://autoflow-web.onrender.com
+      - key: DATABASE_URL
+        value: ./data/autoflow.db
+
+  - type: web
+    name: autoflow-web
+    env: static
+    buildCommand: npm ci --no-audit --no-fund && npm run build --workspace=@autoflow/web
+    staticPublishPath: apps/web/dist
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: autoflow-api
+          property: host

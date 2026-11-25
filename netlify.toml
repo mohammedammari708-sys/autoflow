@@ -1,0 +1,32 @@
+# Netlify — AutoFlow web (static site).
+# See DEPLOY.md for the step-by-step guide (in Darija).
+#
+# Connect the repo in Netlify (Add new site → Import an existing
+# project → GitHub → pick the repo). Netlify reads this file.
+#
+# AFTER the first deploy you MUST set the API URL, because the
+# frontend and the API live on different domains:
+#   Site configuration → Environment variables → add
+#   VITE_API_URL = https://autoflow-api.onrender.com
+#   (your real API URL), then trigger a redeploy — the API URL is
+#   baked into the build, so changing it needs a rebuild.
+# Also set COOKIE_SAMESITE=none on the API side (see render.yaml).
+#
+# FREE TIER (new accounts, verified 2026-11-25): 300 credits/month,
+# hard limit — a production deploy costs 15 credits (~20 deploys a
+# month if you spend everything on deploys), bandwidth 20 credits/GB
+# (~15 GB a month). Build minutes are not metered on this plan.
+
+[build]
+  base = "."
+  command = "npm ci --no-audit --no-fund && npm run build --workspace=@autoflow/web"
+  publish = "apps/web/dist"
+
+[build.environment]
+  NODE_VERSION = "24"
+
+# Single-page app: serve index.html for all routes (React Router).
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
