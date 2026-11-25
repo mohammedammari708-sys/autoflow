@@ -4,6 +4,7 @@
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -274,4 +275,168 @@ test("integrations catalog is seeded, all not_configured; executions empty; syst
   assert.equal(sys.json?.api, "ok");
   assert.equal(sys.json?.db, "ok");
   assert.equal(typeof sys.json?.uptimeSeconds, "number");
+});
+
+/* ---- Phase 3: execution engine ---- */
+
+let phase3WorkflowId = "";
+let phase3ExecutionId = "";
+
+async function createWorkflowWithDefinition(c: Client, name: string, definition: unknown) {
+  const created = await c.req("POST", "/api/workflows", { name });
+  assert.equal(created.status, 201, created.text);
+  const id = created.json?.workflow.id as string;
+  assert.ok(id);
+  const patched = await c.req("PATCH", `/api/workflows/${id}`, { definition });
+  assert.equal(patched.status, 200, patched.text);
+  return id;
+}
+
+test("Phase 3: manual run with a real HTTP Request node against a local stub succeeds", async () => {
+  const c = new Client();
+  await c.req("POST", "/api/auth/login", {
+    email: "alice@example.com",
+    password: "newpassword1",
+  });
+
+  // Local stub — no external network dependency.
+  const stub = http.createServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, hello: "world" }));
+  });
+  await new Promise<void>((resolve) => stub.listen(0, "127.0.0.1", () => resolve()));
+  const addr = stub.address();
+  assert.ok(typeof addr === "object" && addr, "stub should be listening");
+  const stubUrl = `http://127.0.0.1:${(addr as { port: number }).port}/ping`;
+
+  try {
+    phase3WorkflowId = await createWorkflowWithDefinition(c, "Phase 3 stub flow", {
+      nodes: [
+        { id: "t1", type: "manual-trigger", name: "Manual Trigger", position: { x: 0, y: 0 }, config: {} },
+        { id: "h1", type: "http-request", name: "HTTP Request", position: { x: 200, y: 0 }, config: { url: stubUrl, method: "GET" } },
+      ],
+      edges: [{ id: "e1", source: "t1", target: "h1" }],
+    });
+
+    const run = await c.req("POST", `/api/workflows/${phase3WorkflowId}/run`, {});
+    assert.equal(run.status, 200, run.text);
+    assert.equal(run.json?.execution.status, "success", run.text);
+    assert.equal(run.json?.execution.error, null);
+    assert.ok(run.json?.execution.id, "run should return an execution id");
+    assert.equal(run.json?.execution.workflowId, phase3WorkflowId);
+    const nodes = run.json?.nodes as Array<{ nodeId: string; status: string }>;
+    assert.equal(nodes.length, 2);
+    assert.deepEqual(nodes.map((n) => n.nodeId), ["t1", "h1"]);
+    assert.ok(nodes.every((n) => n.status === "success"));
+    phase3ExecutionId = run.json?.execution.id as string;
+
+    const detail = await c.req("GET", `/api/executions/${phase3ExecutionId}`);
+    assert.equal(detail.status, 200, detail.text);
+    assert.equal(detail.json?.execution.id, phase3ExecutionId);
+    assert.equal(detail.json?.execution.status, "success");
+    const logs = detail.json?.logs as Array<{ nodeId: string; level: string; data: unknown }>;
+    assert.equal(logs.length, 2, detail.text);
+    assert.ok(logs.every((l) => l.level === "info"));
+    assert.deepEqual(logs.map((l) => l.nodeId), ["t1", "h1"]);
+    const httpLog = logs.find((l) => l.nodeId === "h1");
+    assert.equal((httpLog?.data as { httpStatus: number }).httpStatus, 200);
+  } finally {
+    await new Promise<void>((resolve) => stub.close(() => resolve()));
+  }
+});
+
+test("Phase 3: Telegram node fails honestly — not configured, never faked", async () => {
+  const c = new Client();
+  await c.req("POST", "/api/auth/login", {
+    email: "alice@example.com",
+    password: "newpassword1",
+  });
+  const workflowId = await createWorkflowWithDefinition(c, "Phase 3 telegram flow", {
+    nodes: [
+      { id: "tg1", type: "telegram-trigger", name: "Telegram Trigger", position: { x: 0, y: 0 }, config: { chatId: "", keyword: "" } },
+      { id: "s1", type: "google-sheets-append", name: "Google Sheets Append Row", position: { x: 200, y: 0 }, config: { spreadsheetId: "", sheet: "Sheet1", columns: ["message"] } },
+    ],
+    edges: [{ id: "e1", source: "tg1", target: "s1" }],
+  });
+
+  const run = await c.req("POST", `/api/workflows/${workflowId}/run`, {});
+  assert.equal(run.status, 200, run.text);
+  assert.equal(run.json?.execution.status, "failed", run.text);
+  assert.match(run.json?.execution.error as string, /not configured/i);
+  assert.match(run.json?.execution.error as string, /Telegram/);
+  // Walk stopped at the failing node: only the Telegram node ran.
+  const nodes = run.json?.nodes as Array<{ nodeId: string; status: string; error?: string }>;
+  assert.equal(nodes.length, 1);
+  assert.equal(nodes[0].nodeId, "tg1");
+  assert.equal(nodes[0].status, "failed");
+  assert.match(nodes[0].error ?? "", /not configured/i);
+
+  const detail = await c.req("GET", `/api/executions/${run.json?.execution.id}`);
+  assert.equal(detail.status, 200, detail.text);
+  const logs = detail.json?.logs as Array<{ nodeId: string; level: string; message: string }>;
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].nodeId, "tg1");
+  assert.equal(logs[0].level, "error");
+  assert.match(logs[0].message, /not configured/i);
+});
+
+test("Phase 3: ownership isolation — user B cannot run or read user A's workflow/execution", async () => {
+  const b = new Client();
+  await b.req("POST", "/api/auth/login", {
+    email: "bob@example.com",
+    password: "supersecret2",
+  });
+  const run = await b.req("POST", `/api/workflows/${phase3WorkflowId}/run`, {});
+  assert.equal(run.status, 404);
+  assert.equal(run.json?.error.code, "NOT_FOUND");
+
+  const peek = await b.req("GET", `/api/executions/${phase3ExecutionId}`);
+  assert.equal(peek.status, 404);
+  assert.equal(peek.json?.error.code, "NOT_FOUND");
+});
+
+test("Phase 3: workflow with no nodes fails with a clear error, not a 500", async () => {
+  const c = new Client();
+  await c.req("POST", "/api/auth/login", {
+    email: "alice@example.com",
+    password: "newpassword1",
+  });
+  const created = await c.req("POST", "/api/workflows", { name: "Empty flow" });
+  assert.equal(created.status, 201, created.text);
+  const workflowId = created.json?.workflow.id as string;
+
+  const run = await c.req("POST", `/api/workflows/${workflowId}/run`, {});
+  assert.equal(run.status, 200, run.text);
+  assert.equal(run.json?.execution.status, "failed");
+  assert.match(run.json?.execution.error as string, /no nodes/i);
+  assert.ok(run.json?.execution.finishedAt, "failed execution should have finishedAt");
+
+  const detail = await c.req("GET", `/api/executions/${run.json?.execution.id}`);
+  assert.equal(detail.status, 200, detail.text);
+  const logs = detail.json?.logs as Array<{ level: string }>;
+  assert.ok(logs.length >= 1);
+  assert.equal(logs[0].level, "error");
+});
+
+test("Phase 3: HTTP Request with a non-http(s) URL fails honestly", async () => {
+  const c = new Client();
+  await c.req("POST", "/api/auth/login", {
+    email: "alice@example.com",
+    password: "newpassword1",
+  });
+  const workflowId = await createWorkflowWithDefinition(c, "Phase 3 bad URL flow", {
+    nodes: [
+      { id: "t1", type: "manual-trigger", name: "Manual Trigger", position: { x: 0, y: 0 }, config: {} },
+      { id: "h1", type: "http-request", name: "HTTP Request", position: { x: 200, y: 0 }, config: { url: "ftp://example.com/x", method: "GET" } },
+    ],
+    edges: [{ id: "e1", source: "t1", target: "h1" }],
+  });
+  const run = await c.req("POST", `/api/workflows/${workflowId}/run`, {});
+  assert.equal(run.status, 200, run.text);
+  assert.equal(run.json?.execution.status, "failed");
+  assert.match(run.json?.execution.error as string, /http:\/\/ or https:\/\//);
+  const nodes = run.json?.nodes as Array<{ nodeId: string; status: string }>;
+  assert.equal(nodes.length, 2);
+  assert.equal(nodes[0].status, "success");
+  assert.equal(nodes[1].status, "failed");
 });

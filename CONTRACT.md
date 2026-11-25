@@ -33,7 +33,9 @@ Errors are always JSON: `{ "error": { "code": "VALIDATION_ERROR" | "UNAUTHORIZED
 | GET | `/templates` | yes | — | 200 `{ "templates": [{ "id", "name", "description", "category", "createdAt" }] }` |
 | GET | `/templates/:id` | yes | — | 200 `{ "template": { ..., "definition": {...} } }` |
 | POST | `/templates/:id/import` | yes | `{ "name"? }` — creates a real workflow from the template definition | 201 `{ "workflow": {...} }` |
+| POST | `/workflows/:id/run` | yes | Owner only (404 if not yours). Runs the workflow synchronously (bounded ~30s) and returns the execution plus a per-node summary — no polling needed. | 200 `{ "execution": { "id", "workflowId", "status": "running" \| "success" \| "failed", "startedAt", "finishedAt", "error" }, "nodes": [{ "nodeId", "nodeType", "name", "status": "success" \| "failed", "error"? }] }` |
 | GET | `/executions` | yes | — | 200 `{ "executions": [] }` in Phase 1 (real, empty) |
+| GET | `/executions/:id` | yes | Owner only (404 if not yours) | 200 `{ "execution": {...}, "logs": [{ "id", "nodeId", "level": "info" \| "error", "message", "data", "createdAt" }] }` (logs in execution order) |
 | GET | `/integrations` | yes | — | 200 `{ "integrations": [{ "id", "slug", "name", "category", "description", "status": "not_configured", "authType" }] }` |
 | GET | `/system/status` | yes | — | 200 `{ "api": "ok", "db": "ok", "uptimeSeconds", "version": "0.1.0" }` |
 
@@ -77,6 +79,21 @@ with indexes on `workflows.user_id`, `workflow_executions.workflow_id`,
 - No secrets in frontend code or in git: `.env` is gitignored everywhere.
 
 ## Seeded templates (real workflow JSON, execution arrives in Phase 3)
+
+Execution engine (Phase 3): `POST /workflows/:id/run` walks the definition
+from its trigger node (first trigger-type node, else the node with no
+incoming edges) in edge order, visiting each reachable node once
+(sequential; cycles stop at already-visited nodes; max 50 nodes per run,
+max ~30s total, 15s per-node timeout for HTTP). One `execution_logs` row
+per node; a node failure stops the walk and marks the execution `failed`.
+**Honest failure (binding):** integrations are all `not_configured` until
+Phase 4 — a node needing one (Telegram, Email, Google Sheets, Discord)
+FAILS with e.g. `"Telegram is not configured — connect it in Integrations
+(Phase 4)"`, recorded in the logs; success is never faked. Only
+`http-request` really executes (real `fetch`, http/https only, non-2xx is
+a node failure). Manual runs start triggers with empty input
+(webhook/schedule triggers log that explicitly). Logs never contain
+secrets, request headers, or full response bodies (truncated to ~500 chars).
 
 1. **Telegram message → Google Sheets** (category: Communication):
    nodes: `telegram-trigger` (Telegram Trigger), `sheets-append`

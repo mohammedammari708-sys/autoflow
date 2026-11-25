@@ -97,10 +97,33 @@ export interface Integration {
 export interface Execution {
   id: string;
   workflowId?: string;
+  workflowName?: string;
   status?: string;
   startedAt?: string;
   finishedAt?: string;
   error?: string | null;
+}
+
+export interface ExecutionNodeResult {
+  nodeId: string;
+  nodeType: string;
+  name: string;
+  status: string;
+  error?: string | null;
+}
+
+export interface ExecutionLog {
+  id: string;
+  nodeId: string;
+  level: string;
+  message: string;
+  data?: unknown;
+  createdAt: string;
+}
+
+export interface RunResult {
+  execution: Execution;
+  nodes: ExecutionNodeResult[];
 }
 
 export interface DashboardStats {
@@ -176,6 +199,8 @@ export const workflowsApi = {
     }),
   remove: (id: string) =>
     api<undefined>(`/api/workflows/${id}`, { method: 'DELETE' }),
+  run: (id: string) =>
+    api<RunResult>(`/api/workflows/${id}/run`, { method: 'POST' }),
 };
 
 export const dashboardApi = {
@@ -199,4 +224,6 @@ export const integrationsApi = {
 
 export const executionsApi = {
   list: () => api<{ executions: Execution[] }>('/api/executions'),
+  detail: (id: string) =>
+    api<{ execution: Execution; logs: ExecutionLog[] }>(`/api/executions/${id}`),
 };

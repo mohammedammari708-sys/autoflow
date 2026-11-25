@@ -1,10 +1,11 @@
-// Workflow Studio — the visual drag-and-drop editor (Phase 2).
-// Built on @xyflow/react. Loads the stored definition, lets the user add /
-// move / connect / configure / delete nodes, and saves the definition back
-// with PATCH /api/workflows/:id. It never claims a workflow runs:
-// execution is Phase 3, so the Run button is disabled with an honest note.
+// Workflow Studio — the visual drag-and-drop editor (Phase 2) with
+// execution (Phase 3). Loads the stored definition, lets the user add /
+// move / connect / configure / delete nodes, saves the definition back
+// with PATCH /api/workflows/:id, and runs it with POST /api/workflows/:id/run,
+// showing the real per-node result returned by the server.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Background,
   BackgroundVariant,
@@ -20,7 +21,7 @@ import {
 import type { Connection, Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { workflowsApi, ApiError } from '../../lib/api';
-import type { Workflow } from '../../lib/api';
+import type { RunResult, Workflow } from '../../lib/api';
 import { useI18n } from '../../i18n';
 import { useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../context/ToastContext';
@@ -85,6 +86,9 @@ function EditorInner({
   const selectedEdge = edges.find((e) => e.id === selectedEdgeId) ?? null;
   const [paletteOpen, setPaletteOpen] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [runResult, setRunResult] = useState<RunResult | null>(null);
+  const [runError, setRunError] = useState('');
   const savedRef = useRef(snapshot(workflow.name, initial.nodes, initial.edges));
 
   const dirty = snapshot(name, nodes, edges) !== savedRef.current;
@@ -188,6 +192,23 @@ function EditorInner({
     }
   }, [selectedNodeId, selectedEdgeId, setNodes, setEdges]);
 
+  const run = useCallback(async () => {
+    // Runs the saved workflow on the server and shows the real result —
+    // no fake progress: the button shows "Running…" only while the
+    // request is in flight, then the server's per-node outcome.
+    setRunning(true);
+    setRunResult(null);
+    setRunError('');
+    try {
+      const result = await workflowsApi.run(workflow.id);
+      setRunResult(result);
+    } catch (err) {
+      setRunError(err instanceof ApiError ? err.message : t.editor.runError);
+    } finally {
+      setRunning(false);
+    }
+  }, [workflow.id, t]);
+
   const save = useCallback(async () => {
     const trimmed = name.trim();
     if (!trimmed) {
@@ -240,13 +261,13 @@ function EditorInner({
             {t.editor.deleteSelected}
           </Button>
           <Button
-            variant="secondary"
             size="sm"
-            disabled
-            title={t.editor.runNote}
+            loading={running}
+            disabled={running}
+            onClick={() => void run()}
             className="min-h-[44px]"
           >
-            ▶ {t.editor.runDisabled}
+            ▶ {running ? t.editor.running : t.editor.run}
           </Button>
           <Button size="sm" loading={saving} disabled={!dirty} onClick={() => void save()} className="min-h-[44px]">
             {t.editor.save}
@@ -366,9 +387,77 @@ function EditorInner({
         </div>
       </div>
 
-      <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-        {t.editor.runNote}
-      </p>
+      {/* Run result — the real server outcome, shown only once known. */}
+      {(runResult || runError) && (
+        <div
+          role="status"
+          className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft dark:border-slate-800 dark:bg-slate-900"
+        >
+          {runError ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone="red">{t.editor.runFailed}</Badge>
+              <p className="min-w-0 flex-1 text-sm text-slate-700 dark:text-slate-200">{runError}</p>
+              <Button variant="ghost" size="sm" onClick={() => setRunError('')} className="min-h-[44px]">
+                {t.common.close}
+              </Button>
+            </div>
+          ) : runResult ? (
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone={runResult.execution.status === 'success' ? 'green' : 'red'}>
+                  {runResult.execution.status === 'success' ? t.editor.runSuccess : t.editor.runFailed}
+                </Badge>
+                {runResult.execution.error && (
+                  <p className="min-w-0 flex-1 text-sm text-rose-700 dark:text-rose-300">
+                    {runResult.execution.error}
+                  </p>
+                )}
+                <span className="ms-auto flex flex-wrap items-center gap-2">
+                  <Link
+                    to={`/executions/${runResult.execution.id}`}
+                    className="inline-flex min-h-[44px] items-center rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                  >
+                    {t.editor.viewExecution}
+                  </Link>
+                  <Button variant="ghost" size="sm" onClick={() => setRunResult(null)} className="min-h-[44px]">
+                    {t.common.close}
+                  </Button>
+                </span>
+              </div>
+              <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                {t.editor.runSteps} ({runResult.nodes.length})
+              </p>
+              {runResult.nodes.length === 0 ? (
+                <p className="text-sm text-slate-500 dark:text-slate-400">—</p>
+              ) : (
+                <ul className="flex flex-col gap-2">
+                  {runResult.nodes.map((n) => (
+                    <li
+                      key={n.nodeId}
+                      className="flex flex-col gap-1 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 dark:border-slate-800 dark:bg-slate-800/60 sm:flex-row sm:items-center sm:gap-3"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-slate-900 dark:text-white">
+                          {n.name}
+                        </span>
+                        <span className="block text-xs text-slate-500 dark:text-slate-400">{n.nodeType}</span>
+                      </span>
+                      <Badge tone={n.status === 'success' ? 'green' : 'red'}>
+                        {n.status === 'success' ? t.executions.success : t.executions.failed}
+                      </Badge>
+                      {n.error && (
+                        <span className="text-xs text-rose-700 dark:text-rose-300 sm:max-w-xs sm:text-end">
+                          {n.error}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }

@@ -65,6 +65,7 @@ export default function App() {
         <Route path="/integrations" element={<IntegrationsPage />} />
         <Route path="/ai" element={<AIAssistantPage />} />
         <Route path="/executions" element={<ExecutionsPage />} />
+        <Route path="/executions/:id" element={<ExecutionsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/billing" element={<BillingPage />} />
       </Route>

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireAuth } from "../lib/auth.js";
 import type { Db } from "../lib/db.js";
 import { nowIso } from "../lib/db.js";
+import { runWorkflow } from "../lib/engine.js";
 import { asyncHandler, notFound, validationError } from "../lib/errors.js";
 
 export interface WorkflowRow {
@@ -169,6 +170,17 @@ export function createWorkflowsRouter(db: Db): Router {
       }
       const updated = getOwnedWorkflow(db, req.user!.id, row.id);
       res.json({ workflow: serializeWorkflow(updated) });
+    }),
+  );
+
+  router.post(
+    "/:id/run",
+    asyncHandler(async (req: Request, res: Response) => {
+      const row = getOwnedWorkflow(db, req.user!.id, String(req.params.id));
+      // Runs synchronously: the engine is bounded (~30s max) and returns
+      // the execution plus a per-node summary, so the UI needs no polling.
+      const result = await runWorkflow(db, req.user!.id, row);
+      res.json({ execution: result.execution, nodes: result.nodes });
     }),
   );
 
