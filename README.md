@@ -132,9 +132,14 @@ What ships in this repo:
   (API on Node 24, web on nginx).
 - `docker-compose.yml` — same-origin stack (web proxies `/api` to the
   API; data in the `autoflow-data` volume).
+- `railway.json` — Railway config for the API service: Dockerfile
+  builder (`apps/api/Dockerfile`), healthcheck on `/health`, restart
+  on failure. Railway is the no-card path (trial: $5 once for 30
+  days, then $1/month; no card required).
 - `render.yaml` — Render blueprint: free API web service + free static
   site. Demo only on the free tier: Render's free filesystem is
-  ephemeral, so the SQLite file is lost on restart.
+  ephemeral, so the SQLite file is lost on restart. Render now
+  requires a card for the $1 verification hold.
 - `netlify.toml` — Netlify static site for the web app.
 - Split deployments (frontend and API on different domains) work via
   `VITE_API_URL` (build-time, web) + `COOKIE_SAMESITE=none` (API) —

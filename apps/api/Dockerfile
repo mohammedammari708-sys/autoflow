@@ -17,7 +17,8 @@
 # - The SQLite file lives at /app/data/autoflow.db. Without a volume
 #   (or a persistent disk on your host) the data is lost when the
 #   container is replaced. See DEPLOY.md.
-# - PORT is honoured from the environment (Render injects it).
+# - PORT is honoured from the environment (Railway injects it at
+#   runtime; the ENV PORT=4000 below is only the default).
 
 FROM node:24-alpine AS build
 WORKDIR /build
